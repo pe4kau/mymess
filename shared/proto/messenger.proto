@@ -1,0 +1,124 @@
+syntax = "proto3";
+package messenger;
+option csharp_namespace = "Messenger";
+
+import "google/protobuf/timestamp.proto";
+
+service AuthService {
+  rpc Register(RegisterRequest) returns (AuthResponse);
+  rpc Login(LoginRequest) returns (AuthResponse);
+  rpc Refresh(RefreshRequest) returns (AuthResponse);
+}
+
+service ChatService {
+  rpc CreateChat(CreateChatRequest) returns (CreateChatResponse);
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+  rpc GetHistory(GetHistoryRequest) returns (GetHistoryResponse);
+}
+
+service EventService {
+  // server streaming for events
+  rpc SubscribeEvents(SubscribeRequest) returns (stream Event);
+}
+
+service KeyService {
+  rpc UploadPreKey(UploadPreKeyRequest) returns (UploadPreKeyResponse);
+  rpc GetPreKey(GetPreKeyRequest) returns (GetPreKeyResponse);
+}
+
+message RegisterRequest {
+  string username = 1;
+  string password = 2;
+  string device_id = 3;
+  bytes identity_key = 4; // public identity key
+  bytes pre_key = 5; // a public pre-key for E2E
+}
+
+message LoginRequest {
+  string username = 1;
+  string password = 2;
+  string device_id = 3;
+}
+
+message RefreshRequest {
+  string refresh_token = 1;
+}
+
+message AuthResponse {
+  bool success = 1;
+  string access_token = 2;
+  string refresh_token = 3;
+  string message = 4;
+}
+
+message CreateChatRequest {
+  string name = 1;
+  repeated string participant_usernames = 2;
+  bool is_group = 3;
+}
+
+message CreateChatResponse {
+  string chat_id = 1;
+}
+
+message SendMessageRequest {
+  string chat_id = 1;
+  string sender = 2;
+  bytes ciphertext = 3;
+  string metadata = 4; // optional JSON metadata (e.g. algorithm version)
+}
+
+message SendMessageResponse {
+  bool ok = 1;
+  string message_id = 2;
+}
+
+message GetHistoryRequest {
+  string chat_id = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+}
+
+message Message {
+  string id = 1;
+  string chat_id = 2;
+  string sender = 3;
+  bytes ciphertext = 4;
+  string metadata = 5;
+  google.protobuf.Timestamp timestamp = 6;
+}
+
+message GetHistoryResponse {
+  repeated Message messages = 1;
+}
+
+message SubscribeRequest {
+  string username = 1;
+  string device_id = 2;
+}
+
+message Event {
+  string type = 1;
+  string payload = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+message UploadPreKeyRequest {
+  string username = 1;
+  string device_id = 2;
+  bytes pre_key = 3; // public pre-key
+  bytes identity_key = 4; // public identity key
+}
+
+message UploadPreKeyResponse {
+  bool ok = 1;
+}
+
+message GetPreKeyRequest {
+  string username = 1;
+}
+
+message GetPreKeyResponse {
+  bytes pre_key = 1;
+  bytes identity_key = 2;
+}

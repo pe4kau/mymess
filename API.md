@@ -1,0 +1,1 @@
+See shared/proto/messenger.proto and chat report.
