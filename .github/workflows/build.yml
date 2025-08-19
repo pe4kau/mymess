@@ -7,141 +7,63 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build-windows:
+  build:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-    # Устанавливаем MSYS2 + MinGW64 и все нужные пакеты (Qt5, gRPC, protobuf, cmake, ninja, ccache)
-    - name: Setup MSYS2
-      uses: msys2/setup-msys2@v2
-      with:
-        update: true
-        msystem: MINGW64
-        install: >-
-          base-devel
-          git
-          mingw-w64-x86_64-toolchain
-          mingw-w64-x86_64-cmake
-          mingw-w64-x86_64-ninja
-          mingw-w64-x86_64-ccache
-          mingw-w64-x86_64-qt5
-          mingw-w64-x86_64-protobuf
-          mingw-w64-x86_64-grpc
-          mingw-w64-x86_64-sqlite3
+      # MSYS2 с полным набором пакетов, которые требует твой CMake
+      - name: Setup MSYS2 with deps
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          install: >-
+            git
+            pkgconf
+            base-devel
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            # Qt6 для GUI (uic/moc/rcc внутри qt6-tools)
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-tools
+            mingw-w64-x86_64-qt6-svg
+            # gRPC/Protobuf для shared, client-core, server
+            mingw-w64-x86_64-protobuf
+            mingw-w64-x86_64-grpc
+            # Крипто/БД для client-core и server
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-sqlite3
+            # Зависимости сервера
+            mingw-w64-x86_64-libpqxx
+            mingw-w64-x86_64-postgresql
+            mingw-w64-x86_64-hiredis
+            mingw-w64-x86_64-argon2
 
-    # (Опционально) подключаем ccache — ускоряет повторные сборки
-    - name: Configure ccache
-      shell: msys2 {0}
-      run: |
-        echo "max_size = 500M" > ~/.ccache/ccache.conf
-        ccache -s
+      - name: Configure (CMake, Ninja, Release)
+        shell: msys2 {0}
+        run: |
+          set -e
+          mkdir -p build
+          cd build
+          cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+          ninja -v
 
-    # Сборка сервера
-    - name: Build Server
-      shell: msys2 {0}
-      env:
-        CC: gcc
-        CXX: g++
-      run: |
-        set -e
-        cd server
-        mkdir -p build && cd build
-        cmake -G "Ninja" .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_PREFIX_PATH=/mingw64
-        ninja
-        file messenger_server.exe || true
+      - name: Collect executables
+        shell: msys2 {0}
+        run: |
+          set -e
+          cd build
+          # выведем список .exe, чтобы в логах видно было, что собралось
+          find . -name "*.exe" -print
 
-    # Сборка клиента (GUI)
-    - name: Build Client (Qt)
-      shell: msys2 {0}
-      env:
-        CC: gcc
-        CXX: g++
-      run: |
-        set -e
-        cd client
-        mkdir -p build && cd build
-        cmake -G "Ninja" .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_PREFIX_PATH=/mingw64
-        ninja
-        file messenger_client.exe || true
+      - name: Upload executables (artifacts)
+        uses: actions/upload-artifact@v4
+        with:
+          name: messenger-executables
+          path: |
+            build/**/*.exe
+          if-no-files-found: error
 
-    # (Опционально) Прогон тестов, если есть ctest
-    - name: Run tests (if any)
-      shell: msys2 {0}
-      run: |
-        set -e
-        if [ -d "server/build" ]; then ctest --test-dir server/build --output-on-failure || true; fi
-        if [ -d "client/build" ]; then ctest --test-dir client/build --output-on-failure || true; fi
-
-    # Упакуем голые бинарники (exe)
-    - name: Upload raw EXEs
-      uses: actions/upload-artifact@v4
-      with:
-        name: raw-binaries
-        path: |
-          server/build/messenger_server.exe
-          client/build/messenger_client.exe
-
-    # ------- Ниже — создание ПОРТАТИВНОЙ ПАПКИ КЛИЕНТА с нужными DLL Qt -------
-    # windeployqt есть в /mingw64/bin (в MSYS2 это обычно windeployqt-qt5)
-    - name: Package portable GUI (Qt DLL)
-      if: always()
-      shell: msys2 {0}
-      run: |
-        set -e
-        mkdir -p dist/client
-        cp client/build/messenger_client.exe dist/client/
-        # попробуем обе команды, какая доступна — ту и используем
-        if command -v windeployqt-qt5 >/dev/null 2>&1; then
-          windeployqt-qt5 dist/client/messenger_client.exe --no-compiler-runtime --no-angle --no-opengl-sw || true
-        elif command -v windeployqt >/dev/null 2>&1; then
-          windeployqt dist/client/messenger_client.exe --no-compiler-runtime --no-angle --no-opengl-sw || true
-        else
-          echo "windeployqt not found; skipping Qt DLL deploy"
-        fi
-        # Добавим базовые зависимые DLL MinGW (минимальный набор; ntldd удобнее, но не всегда есть)
-        cp -n /mingw64/bin/libgcc_s_seh-1.dll dist/client/ || true
-        cp -n /mingw64/bin/libstdc++-6.dll    dist/client/ || true
-        cp -n /mingw64/bin/libwinpthread-1.dll dist/client/ || true
-        # Зависимости gRPC/Protobuf (имен может быть много; включим ключевые)
-        for D in libprotobuf* libgrpc* libabsl_* libre2* zlib1.dll libcares* libssl* libcrypto*; do
-          cp -n /mingw64/bin/$D dist/client/ 2>/dev/null || true
-        done
-        # Сжать в zip
-        cd dist && 7z a -tzip messenger-client-portable.zip client
-
-    - name: Upload portable GUI
-      uses: actions/upload-artifact@v4
-      with:
-        name: messenger-client-portable
-        path: dist/messenger-client-portable.zip
-
-    # ------- (Опционально) инсталлятор через Inno Setup --------
-    - name: Build Installer (optional)
-      if: always()
-      shell: msys2 {0}
-      run: |
-        set -e
-        # Установка Inno Setup из MSYS2 репозиториев
-        pacman -S --noconfirm mingw-w64-x86_64-innosetup || true
-        # Подготовим staging-папку для клиента
-        rm -rf installer/stage || true
-        mkdir -p installer/stage
-        7z x dist/messenger-client-portable.zip -oinstaller/stage
-        # Скрипт инсталлятора должен лежать в installer/client.iss (см. ниже)
-        if [ -f "installer/client.iss" ]; then
-          /mingw64/bin/iscc.exe installer/client.iss || true
-        else
-          echo "No installer/client.iss found; skip"
-        fi
-
-    - name: Upload installer (optional)
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: messenger-client-installer
-        path: |
-          installer/*.exe
-          installer/Output/*.exe
