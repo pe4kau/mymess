@@ -1,4 +1,4 @@
-name: build-windows
+name: Build Messenger (Windows / MSYS2)
 
 on:
   push:
@@ -11,60 +11,100 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout repo
-      uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Setup MSYS2
-      uses: msys2/setup-msys2@v2
-      with:
-        update: true
-        install: >-
-          git
-          mingw-w64-x86_64-toolchain
-          mingw-w64-x86_64-cmake
-          mingw-w64-x86_64-ninja
-          mingw-w64-x86_64-qt6-base
-          mingw-w64-x86_64-qt6-tools
-          mingw-w64-x86_64-qt6-svg
-          mingw-w64-x86_64-protobuf
-          mingw-w64-x86_64-grpc
-          mingw-w64-x86_64-openssl
-          mingw-w64-x86_64-sqlite3
-          mingw-w64-x86_64-libpqxx
-          mingw-w64-x86_64-postgresql
-          mingw-w64-x86_64-hiredis
-          mingw-w64-x86_64-argon2
+      - name: Setup MSYS2 (MINGW64) with dependencies
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            base-devel
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            # Qt6 for GUI
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-tools
+            mingw-w64-x86_64-qt6-svg
+            # gRPC / Protobuf
+            mingw-w64-x86_64-protobuf
+            mingw-w64-x86_64-grpc
+            # Crypto / DB
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-sqlite3
+            # Server deps
+            mingw-w64-x86_64-libpqxx
+            mingw-w64-x86_64-postgresql
+            mingw-w64-x86_64-hiredis
+            mingw-w64-x86_64-argon2
+            # Tests
+            mingw-w64-x86_64-gtest
 
-    - name: Build Server
-      shell: msys2 {0}
-      run: |
-        cd messenger_server
-        mkdir -p build
-        cd build
-        cmake .. -G "Ninja"
-        ninja
+      - name: Configure (CMake, Ninja, Release)
+        shell: msys2 {0}
+        run: |
+          set -e
+          cmake -S deliverable -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
-    - name: Build Client (Qt)
-      shell: msys2 {0}
-      run: |
-        cd messenger_client
-        mkdir -p build
-        cd build
-        cmake .. -G "Ninja"
-        ninja
+      - name: Build all targets
+        shell: msys2 {0}
+        run: |
+          set -e
+          cmake --build build --config Release -v
 
-    - name: Run tests (if any)
-      shell: msys2 {0}
-      run: |
-        if [ -d messenger_server/build ]; then ctest --test-dir messenger_server/build --output-on-failure || true; fi
-        if [ -d messenger_client/build ]; then ctest --test-dir messenger_client/build --output-on-failure || true; fi
+      - name: Run tests (if any)
+        shell: msys2 {0}
+        run: |
+          set -e
+          if [ -f build/CTestTestfile.cmake ]; then
+            ctest --test-dir build --output-on-failure || true
+          else
+            echo "No CTest configuration found at top-level. Skipping."
+          fi
 
-    - name: Upload raw EXEs
-      uses: actions/upload-artifact@v4
-      with:
-        name: messenger-executables
-        path: |
-          messenger_server/build/*.exe
-          messenger_client/build/*.exe
+      - name: List built executables
+        shell: msys2 {0}
+        run: |
+          find build -name "*.exe" -print
+
+      - name: Upload executables (raw)
+        uses: actions/upload-artifact@v4
+        with:
+          name: messenger-executables
+          path: |
+            build/**/*.exe
+          if-no-files-found: error
+
+      - name: Package GUI (windeployqt)
+        shell: msys2 {0}
+        run: |
+          set -e
+          GUI_EXE=$(find build -name "messenger_client_gui.exe" -print -quit || true)
+          if [ -z "$GUI_EXE" ]; then
+            echo "GUI executable not found. Skipping portable packaging."
+            exit 0
+          fi
+          mkdir -p portable
+          cp "$GUI_EXE" portable/
+          if command -v windeployqt >/dev/null 2>&1; then
+            WDEP=windeployqt
+          elif command -v windeployqt-qt6 >/dev/null 2>&1; then
+            WDEP=windeployqt-qt6
+          else
+            echo "windeployqt not found in PATH"; exit 1
+          fi
+          "$WDEP" --release portable/messenger_client_gui.exe || "$WDEP" portable/messenger_client_gui.exe
+
+      - name: Upload portable GUI folder
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: messenger-gui-portable
+          path: portable/**
+          if-no-files-found: warn
 
 
