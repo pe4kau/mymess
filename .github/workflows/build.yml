@@ -1,4 +1,4 @@
-name: Build Messenger
+name: build-windows
 
 on:
   push:
@@ -7,22 +7,19 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build-windows:
+  build:
     runs-on: windows-latest
 
     steps:
-    - name: Set up job
-      uses: actions/checkout@v4
+    - name: Checkout repo
+      uses: actions/checkout@v3
 
     - name: Setup MSYS2
       uses: msys2/setup-msys2@v2
       with:
-        msystem: MINGW64
         update: true
         install: >-
           git
-          pkgconf
-          base-devel
           mingw-w64-x86_64-toolchain
           mingw-w64-x86_64-cmake
           mingw-w64-x86_64-ninja
@@ -38,58 +35,36 @@ jobs:
           mingw-w64-x86_64-hiredis
           mingw-w64-x86_64-argon2
 
-    - name: Configure ccache
-      shell: msys2 {0}
-      run: |
-        echo "max_size = 500M" > ~/.ccache/ccache.conf
-
     - name: Build Server
       shell: msys2 {0}
       run: |
-        cmake -S server -B build/server -G Ninja
-        cmake --build build/server --config Release
+        cd messenger_server
+        mkdir -p build
+        cd build
+        cmake .. -G "Ninja"
+        ninja
 
     - name: Build Client (Qt)
       shell: msys2 {0}
       run: |
-        cmake -S client -B build/client -G Ninja
-        cmake --build build/client --config Release
+        cd messenger_client
+        mkdir -p build
+        cd build
+        cmake .. -G "Ninja"
+        ninja
 
     - name: Run tests (if any)
       shell: msys2 {0}
       run: |
-        ctest --test-dir build --output-on-failure || true
+        if [ -d messenger_server/build ]; then ctest --test-dir messenger_server/build --output-on-failure || true; fi
+        if [ -d messenger_client/build ]; then ctest --test-dir messenger_client/build --output-on-failure || true; fi
 
     - name: Upload raw EXEs
       uses: actions/upload-artifact@v4
       with:
-        name: messenger-exes
-        path: build/**/*.exe
+        name: messenger-executables
+        path: |
+          messenger_server/build/*.exe
+          messenger_client/build/*.exe
 
-    - name: Package portable GUI (Qt DLL)
-      shell: msys2 {0}
-      run: |
-        mkdir -p portable
-        cp build/client/messenger_client.exe portable/
-        windeployqt portable/messenger_client.exe
-
-    - name: Upload portable GUI
-      uses: actions/upload-artifact@v4
-      with:
-        name: messenger-portable
-        path: portable/**
-
-    - name: Build Installer (optional)
-      shell: msys2 {0}
-      run: |
-        pacman --noconfirm -S mingw-w64-x86_64-innosetup || true
-        iscc installer/setup.iss
-
-    - name: Upload installer (optional)
-      uses: actions/upload-artifact@v4
-      with:
-        name: messenger-installer
-        path: installer/*.exe
-
-          if-no-files-found: error
 
