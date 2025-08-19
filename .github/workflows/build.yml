@@ -7,15 +7,14 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - name: Set up job
+        uses: actions/checkout@v3
 
-      # MSYS2 с полным набором пакетов, которые требует твой CMake
-      - name: Setup MSYS2 with deps
+      - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
         with:
           update: true
@@ -26,14 +25,14 @@ jobs:
             mingw-w64-x86_64-toolchain
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
-            # Qt6 для GUI (uic/moc/rcc внутри qt6-tools)
+            # Qt6 для GUI
             mingw-w64-x86_64-qt6-base
             mingw-w64-x86_64-qt6-tools
             mingw-w64-x86_64-qt6-svg
-            # gRPC/Protobuf для shared, client-core, server
+            # gRPC/Protobuf
             mingw-w64-x86_64-protobuf
             mingw-w64-x86_64-grpc
-            # Крипто/БД для client-core и server
+            # Криптография и БД
             mingw-w64-x86_64-openssl
             mingw-w64-x86_64-sqlite3
             # Зависимости сервера
@@ -42,28 +41,65 @@ jobs:
             mingw-w64-x86_64-hiredis
             mingw-w64-x86_64-argon2
 
-      - name: Configure (CMake, Ninja, Release)
+      - name: Configure ccache
         shell: msys2 {0}
         run: |
-          set -e
-          mkdir -p build
-          cd build
-          cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Release
-          ninja -v
+          echo "max_size = 500M" > ~/.ccache/ccache.conf
 
-      - name: Collect executables
+      - name: Build Server
         shell: msys2 {0}
         run: |
-          set -e
-          cd build
-          # выведем список .exe, чтобы в логах видно было, что собралось
-          find . -name "*.exe" -print
+          mkdir -p build/server
+          cd build/server
+          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ../../server
+          ninja
 
-      - name: Upload executables (artifacts)
-        uses: actions/upload-artifact@v4
+      - name: Build Client (Qt)
+        shell: msys2 {0}
+        run: |
+          mkdir -p build/client
+          cd build/client
+          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ../../client
+          ninja
+
+      - name: Run tests (if any)
+        shell: msys2 {0}
+        run: |
+          echo "No tests configured yet"
+
+      - name: Upload raw EXEs
+        uses: actions/upload-artifact@v3
         with:
-          name: messenger-executables
-          path: |
-            build/**/*.exe
+          name: messenger-exes
+          path: build/**/**/*.exe
+
+      - name: Package portable GUI (Qt DLL)
+        if: always()
+        shell: msys2 {0}
+        run: |
+          set -e
+          cp client/build/messenger_client.exe portable/
+          windeployqt portable/messenger_client.exe
+
+      - name: Upload portable GUI
+        uses: actions/upload-artifact@v3
+        with:
+          name: messenger-portable
+          path: portable/**
+
+      - name: Build Installer (optional)
+        if: always()
+        shell: msys2 {0}
+        run: |
+          set -e
+          pacman --noconfirm -S mingw-w64-x86_64-innosetup
+          iscc installer/setup.iss
+
+      - name: Upload installer (optional)
+        uses: actions/upload-artifact@v3
+        with:
+          name: messenger-installer
+          path: installer/*.exe
+
           if-no-files-found: error
 
