@@ -25,23 +25,21 @@ jobs:
           mingw-w64-x86_64-ninja
           mingw-w64-x86_64-qt5
 
-    - name: Build Server
+    - name: Configure & Build (CMake + Ninja)
       shell: msys2 {0}
       run: |
-        cd messenger_server
         mkdir -p build
         cd build
-        cmake .. -G "Ninja"
+        cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Release
         ninja
 
-    - name: Build Client (Qt)
-      shell: msys2 {0}
-      run: |
-        cd messenger_client
-        mkdir -p build
-        cd build
-        cmake .. -G "Ninja"
-        ninja
+    - name: Upload executables
+      uses: actions/upload-artifact@v3
+      with:
+        name: messenger-executables
+        path: |
+          build/**/*.exe
+
 
     - name: Upload raw EXEs
       uses: actions/upload-artifact@v3
@@ -50,3 +48,4 @@ jobs:
         path: |
           messenger_server/build/*.exe
           messenger_client/build/*.exe
+
